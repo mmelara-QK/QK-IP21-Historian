@@ -87,14 +87,20 @@ End Function
 ' ===== HTTP =====
 Private Function PostHistory(ByVal payloadXml As String, ByRef outStatus As Long, ByRef outStatusText As String, ByRef outResp As String) As String
     Dim http As Object
-    Set http = GetHttp()
-
+    Set http = CreateObject("WinHttp.WinHttpRequest.5.1")
+    http.SetAutoLogonPolicy 0   ' AutoLogonPolicy_Always
+    
     Dim url As String
     url = BASE_URL & HISTORY_ENDPOINT
 
     http.Open "POST", url, False
-    http.SetRequestHeader "Content-Type", "application/json; charset=utf-16"
+    http.SetTimeouts 5000, 15000, 15000, 30000
+
+    ' You're sending XML payload (<Q>...</Q>), so Content-Type should be XML
+    http.SetRequestHeader "Content-Type", "text/xml; charset=utf-8"
     http.SetRequestHeader "Accept", "application/json"
+    http.SetRequestHeader "Connection", "close"
+
     http.Send payloadXml
 
     outStatus = http.Status
@@ -132,7 +138,9 @@ Private Function ParseSamplesToDict(ByVal jsonText As String) As Object
 
     Dim re As Object, matches As Object, m As Object
     Set re = CreateObject("VBScript.RegExp")
-    re.Pattern = """t""\s*:\s*(\d+)\s*,\s*""v""\s*:\s*(null|[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)"
+
+    ' "t":123,"v":12.3   OR   "t":123,"v":"12.3"   OR   "t":123,"v":null
+    re.Pattern = """t""\s*:\s*(\d+)\s*,\s*""v""\s*:\s*(null|""?[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?""?)"
     re.Global = True
     re.IgnoreCase = True
     re.Multiline = True
@@ -142,10 +150,18 @@ Private Function ParseSamplesToDict(ByVal jsonText As String) As Object
         For Each m In matches
             Dim tKey As String: tKey = m.SubMatches(0)
             Dim vRaw As String: vRaw = LCase$(m.SubMatches(1))
-            If vRaw <> "null" Then d(tKey) = CDbl(m.SubMatches(1))
+
+            If vRaw = "null" Then
+                ' Keep the timestamp, but blank value
+                d(tKey) = Empty
+            Else
+                ' Remove quotes if present
+                vRaw = Replace$(vRaw, """", "")
+                d(tKey) = CDbl(vRaw)
+            End If
         Next m
     End If
-
+    
     Set ParseSamplesToDict = d
 End Function
 
@@ -172,11 +188,24 @@ Public Sub AtHistoryClearCache()
     On Error GoTo 0
 End Sub
 
+Public Sub AtHistoryRefreshAll()
+    AtHistoryClearCache
+    Application.CalculateFullRebuild
+End Sub
+
 ' ==========================================================
 '  PUBLIC UDF: spills a table [Time | Tag1 | Tag2 | ...]
 ' ==========================================================
 Public Function AtHistoryTable(ByVal tagHeaderRange As Range, ByVal startDT As Variant, ByVal endDT As Variant, ByVal period As Long, ByVal pu As Long) As Variant
     On Error GoTo Fail
+
+    ' ---- DEBUG: always keep the last attempted request/response ----
+    Dim dbgTag As String
+    Dim dbgPayload As String
+    Dim dbgResp As String
+    Dim dbgStatus As Long
+    Dim dbgStatusText As String
+    Dim dbgErr As String
 
     ' validate dates
     If Not IsDate(startDT) Or Not IsDate(endDT) Then
@@ -234,8 +263,23 @@ Public Function AtHistoryTable(ByVal tagHeaderRange As Range, ByVal startDT As V
 
             Dim st As Long, stText As String, respText As String
             Dim payload As String, resp As String
+
             payload = BuildPayload(tagName, startMs, endMs, period, pu)
+
+            ' ---- store dbg info BEFORE call (so you still see it if PostHistory errors) ----
+            dbgTag = tagName
+            dbgPayload = payload
+            dbgResp = ""
+            dbgStatus = 0
+            dbgStatusText = ""
+            dbgErr = ""
+
             resp = PostHistory(payload, st, stText, respText)
+
+            ' ---- store dbg info AFTER call ----
+            dbgStatus = st
+            dbgStatusText = stText
+            dbgResp = respText   ' raw response text
 
             Set perTag(i) = ParseSamplesToDict(resp)
 
@@ -251,7 +295,12 @@ ContinueTag:
     Next i
 
     If allTimes.Count = 0 Then
-        AtHistoryTable = "No data"
+        AtHistoryTable = "No data" & _
+                         " | LastTag=" & dbgTag & _
+                         " | HTTP=" & CStr(dbgStatus) & " " & dbgStatusText & _
+                         " | Payload=" & Left$(dbgPayload, 400) & _
+                         " | Resp=" & Left$(dbgResp, 400) & _
+                         IIf(Len(dbgErr) > 0, " | " & dbgErr, "")
         Exit Function
     End If
 
@@ -308,6 +357,8 @@ ContinueTag:
     Exit Function
 
 TagFail:
+    ' Capture VBA error info for debugging
+    dbgErr = "Err " & CStr(Err.Number) & ": " & Err.Description
     errors(i) = True
     Set perTag(i) = CreateObject("Scripting.Dictionary")
     Resume ContinueTag
@@ -315,5 +366,4 @@ TagFail:
 Fail:
     AtHistoryTable = "Error: " & Err.Description
 End Function
-
 
