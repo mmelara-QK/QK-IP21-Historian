@@ -29,34 +29,42 @@ Private Sub UserForm_Initialize()
 End Sub
 
 Private Sub btnPickTags_Click()
-    Dim v As Variant
-    v = Application.InputBox("Select the TAG HEADER range (one row across).", "Pick Tag Range", Type:=8)
-    If v = False Then Exit Sub            ' user cancelled
-    txtTags.Value = SheetQualifiedAddress(v)
+    Dim r As Range
+    On Error Resume Next
+    Set r = Application.InputBox("Select the TAG HEADER range (one row across).", "Pick Tag Range", Type:=8)
+    On Error GoTo 0
+    If r Is Nothing Then Exit Sub
+    If Not r Is Nothing Then txtTags.Value = r.Address(True, True, xlA1, True)
 End Sub
 
 Private Sub btnPickStart_Click()
-    Dim v As Variant
-    v = Application.InputBox("Select the Start DateTime cell.", "Pick Start Cell", Type:=8)
-    If v = False Then Exit Sub            ' user cancelled
-    txtStart.Value = SheetQualifiedAddress(v)
+    Dim r As Range
+    On Error Resume Next
+    Set r = Application.InputBox("Select the Start DateTime cell.", "Pick Start Cell", Type:=8)
+    On Error GoTo 0
+    If r Is Nothing Then Exit Sub
+    If Not r Is Nothing Then txtStart.Value = r.Address(True, True, xlA1, True)
 End Sub
 
 Private Sub btnPickEnd_Click()
-    Dim v As Variant
-    v = Application.InputBox("Select the End DateTime cell.", "Pick End Date Cell", Type:=8)
-    If v = False Then Exit Sub            ' user cancelled
-    txtEnd.Value = SheetQualifiedAddress(v)
+    Dim r As Range
+    On Error Resume Next
+    Set r = Application.InputBox("Select the End DateTime cell.", "Pick End Cell", Type:=8)
+    On Error GoTo 0
+    If r Is Nothing Then Exit Sub
+    If Not r Is Nothing Then txtEnd.Value = r.Address(True, True, xlA1, True)
 End Sub
 
 Private Sub btnCancel_Click()
     Unload Me
 End Sub
 Private Sub btnPickOutput_Click()
-    Dim v As Variant
-    v = Application.InputBox("Pick the TOP-LEFT output cell (where the table will spill).", "Pick Output Cell", Type:=8)
-    If v = False Then Exit Sub            ' user cancelled
-    txtOutput.Value = SheetQualifiedAddress(v)
+    Dim r As Range
+    On Error Resume Next
+    Set r = Application.InputBox("Pick the TOP-LEFT output cell (where the table will spill).", "Pick Output Cell", Type:=8)
+    On Error GoTo 0
+    If r Is Nothing Then Exit Sub
+    If Not r Is Nothing Then txtOutput.Value = r.Address(True, True, xlA1, True)
 End Sub
 
 Private Sub btnInsertFormula_Click()
@@ -160,9 +168,5 @@ Private Function RangeFromAddress(ByVal addr As String) As Range
     Set RangeFromAddress = Application.Range(addr)
 End Function
 
-Private Function SheetQualifiedAddress(ByVal r As Range) As String
-    ' No workbook path; only Sheet!$A$1 style
-    SheetQualifiedAddress = "'" & r.Parent.Name & "'!" & r.Address(True, True, xlA1)
-End Function
 
 
