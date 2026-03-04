@@ -14,7 +14,7 @@ Private mHttp As Object
 
 Private Function GetHttp() As Object
     If mHttp Is Nothing Then
-        Set mHttp = CreateObject("WinHttp.WinHttpRequest.5.1")
+        Set mHttp = GetHttp()
         On Error Resume Next
         mHttp.SetAutoLogonPolicy 0
         On Error GoTo 0
