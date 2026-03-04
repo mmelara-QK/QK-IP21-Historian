@@ -32,7 +32,7 @@ Private Sub btnPickTags_Click()
     Dim v As Variant
     v = Application.InputBox("Select the TAG HEADER range (one row across).", "Pick Tag Range", Type:=8)
     If v = False Then Exit Sub            ' user cancelled
-    txtStart.Value = SheetQualifiedAddress(v)
+    txtTags.Value = SheetQualifiedAddress(v)
 End Sub
 
 Private Sub btnPickStart_Click()
@@ -46,7 +46,7 @@ Private Sub btnPickEnd_Click()
     Dim v As Variant
     v = Application.InputBox("Select the End DateTime cell.", "Pick End Date Cell", Type:=8)
     If v = False Then Exit Sub            ' user cancelled
-    txtStart.Value = SheetQualifiedAddress(v)
+    txtEnd.Value = SheetQualifiedAddress(v)
 End Sub
 
 Private Sub btnCancel_Click()
@@ -56,7 +56,7 @@ Private Sub btnPickOutput_Click()
     Dim v As Variant
     v = Application.InputBox("Pick the TOP-LEFT output cell (where the table will spill).", "Pick Output Cell", Type:=8)
     If v = False Then Exit Sub            ' user cancelled
-    txtStart.Value = SheetQualifiedAddress(v)
+    txtOutput.Value = SheetQualifiedAddress(v)
 End Sub
 
 Private Sub btnInsertFormula_Click()
@@ -164,4 +164,5 @@ Private Function SheetQualifiedAddress(ByVal r As Range) As String
     ' No workbook path; only Sheet!$A$1 style
     SheetQualifiedAddress = "'" & r.Parent.Name & "'!" & r.Address(True, True, xlA1)
 End Function
+
 
