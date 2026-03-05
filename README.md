@@ -15,6 +15,7 @@ Installation Instruction:
 12. Click "OK" in the excel add-ins screen and the plug in should be installed.
 
 NOTE: IT IS IMPORTANT THAT THE PLUG-IN IS INSTALLED IN THIS FASSION TO AVOID CONFLICTS BETWEEN USERS!
+Additionally, you must already have access to IP21 via the web browser for this plug-in to work. It uses your windows login credentials.
 
 For any issues, please log them in the "Issues" tab of the github or contact me via email.
   https://github.com/mmelara-QK/QK-IP21-Historian
