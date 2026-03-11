@@ -1,7 +1,7 @@
 # QK-HRL-IP21-Historian
 IP21 Historian for Harleyville, Quikrete
 Installation Instruction:
-1. Download the version of the IP21 Historian you want.
+1. Download the version of the IP21 Historian you want located under "versions". The latest is V1.2.
 2. Open Excel
 3. Go to "File" on the top left ribbons.
 4. Go to "Options" on the bottom left.
