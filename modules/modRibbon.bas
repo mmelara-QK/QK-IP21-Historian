@@ -20,7 +20,7 @@ End Sub
 
 Public Sub BtnAbout_Click(control As IRibbonControl)
     MsgBox "IP21 Historian Add-in" & vbCrLf & _
-           "Version: 1.0" & vbCrLf & _
+           "Version: 1.2" & vbCrLf & _
            "Credits: Mauricio Melara" & vbCrLf & _
            "Support: mauricio.melara@quikrete-cement.com", vbInformation, "About"
 End Sub
