@@ -14,7 +14,7 @@ Private mHttp As Object
 
 Private Function GetHttp() As Object
     If mHttp Is Nothing Then
-        Set mHttp = GetHttp()
+        Set mHttp = CreateObject("WinHttp.WinHttpRequest.5.1")
         On Error Resume Next
         mHttp.SetAutoLogonPolicy 0
         On Error GoTo 0
@@ -116,7 +116,7 @@ End Function
 
 Private Function BuildPayload(ByVal tagName As String, ByVal startMs As Double, ByVal endMs As Double, ByVal period As Long, ByVal pu As Long) As String
     BuildPayload = _
-        "<Q f=""d"" allQuotes=""1"">" & _
+        "<Q f=""D"" allQuotes=""1"">" & _
             "<Tag>" & _
                 "<N><![CDATA[" & tagName & "]]></N>" & _
                 "<D><![CDATA[" & DEFAULT_DATA_SOURCE & "]]></D>" & _
@@ -132,36 +132,135 @@ Private Function BuildPayload(ByVal tagName As String, ByVal startMs As Double, 
         "</Q>"
 End Function
 
-' ===== FAST PARSER (RegEx): get "t" and "v" pairs =====
-Private Function ParseSamplesToDict(ByVal jsonText As String) As Object
-    Dim d As Object: Set d = CreateObject("Scripting.Dictionary")
+Private Function XmlEscapeCDataSafe(ByVal s As String) As String
+    ' Only needed if a tag name could contain "]]>"
+    XmlEscapeCDataSafe = Replace$(s, "]]>", "]]]]><![CDATA[>")
+End Function
+
+Private Function BuildBatchPayload( _
+    ByVal tagHeaderRange As Range, _
+    ByVal startMs As Double, _
+    ByVal endMs As Double, _
+    ByVal period As Long, _
+    ByVal pu As Long _
+) As String
+    
+    Dim xml As String
+    Dim c As Range
+    Dim tagName As String
+    
+    xml = "<Q f=""D"">"
+    
+    For Each c In tagHeaderRange.Cells
+        tagName = Trim$(CStr(c.Value))
+        
+        If Len(tagName) > 0 Then
+            xml = xml & _
+                "<Tag>" & _
+                    "<N><![CDATA[" & XmlEscapeCDataSafe(tagName) & "]]></N>" & _
+                    "<D><![CDATA[" & DEFAULT_DATA_SOURCE & "]]></D>" & _
+                    "<F><![CDATA[" & DEFAULT_FIELD & "]]></F>" & _
+                    "<HF>" & DEFAULT_HF & "</HF>" & _
+                    "<St>" & MsKey(startMs) & "</St>" & _
+                    "<Et>" & MsKey(endMs) & "</Et>" & _
+                    "<RT>" & DEFAULT_RT & "</RT>" & _
+                    "<S>" & DEFAULT_STEPPED & "</S>" & _
+                    "<P>" & period & "</P>" & _
+                    "<PU>" & pu & "</PU>" & _
+                "</Tag>"
+        End If
+    Next c
+    
+    xml = xml & "</Q>"
+    BuildBatchPayload = xml
+End Function
+
+Private Function ParseBatchResponseToPerTag(ByVal respText As String, ByVal expectedTagCount As Long) As Variant
+    Dim perTag() As Object
+    ReDim perTag(1 To expectedTagCount)
+    
+    Dim i As Long
+    For i = 1 To expectedTagCount
+        Set perTag(i) = CreateObject("Scripting.Dictionary")
+        perTag(i)("HasError") = True
+        perTag(i)("ErrorMessage") = "No response block returned for tag"
+        Set perTag(i)("Values") = CreateObject("Scripting.Dictionary")
+    Next i
 
     Dim re As Object, matches As Object, m As Object
     Set re = CreateObject("VBScript.RegExp")
 
-    ' "t":123,"v":12.3   OR   "t":123,"v":"12.3"   OR   "t":123,"v":null
-    re.Pattern = """t""\s*:\s*(\d+)\s*,\s*""v""\s*:\s*(null|""?[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?""?)"
+    re.Pattern = """" & "?samples" & """" & "?\s*:\s*\[(.*?)\]"
     re.Global = True
     re.IgnoreCase = True
     re.Multiline = True
 
-    If re.Test(jsonText) Then
-        Set matches = re.Execute(jsonText)
+    If re.Test(respText) Then
+        Set matches = re.Execute(respText)
+        
+        Dim blockIndex As Long
+        blockIndex = 1
+        
         For Each m In matches
-            Dim tKey As String: tKey = m.SubMatches(0)
-            Dim vRaw As String: vRaw = LCase$(m.SubMatches(1))
+            If blockIndex > expectedTagCount Then Exit For
+            Set perTag(blockIndex) = ParseOneTagBlock(m.SubMatches(0))
+            blockIndex = blockIndex + 1
+        Next m
+    End If
 
-            If vRaw = "null" Then
-                ' Keep the timestamp, but blank value
+    ParseBatchResponseToPerTag = perTag
+End Function
+
+' ===== FAST PARSER (RegEx): get "t" and "v" pairs =====
+Private Function ParseSamplesToDict(ByVal samplesText As String) As Object
+    Dim d As Object
+    Set d = CreateObject("Scripting.Dictionary")
+
+    Dim re As Object, matches As Object, m As Object
+    Set re = CreateObject("VBScript.RegExp")
+
+    ' Handles:
+    ' t:1773227856000,v:3.715
+    ' t:1773227856000,v:null
+    ' t:1773227856000,v:'OFF'
+    ' t:1773227856000,v:"OFF"
+    ' "t":1773227856000,"v":3.715
+    '
+    ' Captures:
+    '   SubMatch(0) = timestamp
+    '   SubMatch(1) = raw value token
+    re.Pattern = """" & "?t" & """" & "?\s*:\s*(\d+)\s*,\s*""" & "?v" & """" & "?\s*:\s*(null|'[^']*'|""[^""]*""|[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)"
+    re.Global = True
+    re.IgnoreCase = True
+    re.Multiline = True
+
+    If re.Test(samplesText) Then
+        Set matches = re.Execute(samplesText)
+        
+        Dim tKey As String
+        Dim vRaw As String
+        Dim firstChar As String
+        
+        For Each m In matches
+            tKey = m.SubMatches(0)
+            vRaw = Trim$(m.SubMatches(1))
+            
+            If LCase$(vRaw) = "null" Then
                 d(tKey) = Empty
             Else
-                ' Remove quotes if present
-                vRaw = Replace$(vRaw, """", "")
-                d(tKey) = CDbl(vRaw)
+                firstChar = Left$(vRaw, 1)
+                
+                If firstChar = "'" Or firstChar = """" Then
+                    ' text value like 'OFF' or "OFF"
+                    d(tKey) = Mid$(vRaw, 2, Len(vRaw) - 2)
+                Else
+                    ' numeric value
+                    d(tKey) = CDbl(vRaw)
+                End If
             End If
         Next m
     End If
-    
+
     Set ParseSamplesToDict = d
 End Function
 
@@ -190,7 +289,7 @@ End Sub
 
 Public Sub AtHistoryRefreshAll()
     AtHistoryClearCache
-    Application.CalculateFullRebuild
+    ActiveSheet.Calculate
 End Sub
 
 ' ==========================================================
@@ -199,7 +298,6 @@ End Sub
 Public Function AtHistoryTable(ByVal tagHeaderRange As Range, ByVal startDT As Variant, ByVal endDT As Variant, ByVal period As Long, ByVal pu As Long) As Variant
     On Error GoTo Fail
 
-    ' ---- DEBUG: always keep the last attempted request/response ----
     Dim dbgTag As String
     Dim dbgPayload As String
     Dim dbgResp As String
@@ -207,7 +305,6 @@ Public Function AtHistoryTable(ByVal tagHeaderRange As Range, ByVal startDT As V
     Dim dbgStatusText As String
     Dim dbgErr As String
 
-    ' validate dates
     If Not IsDate(startDT) Or Not IsDate(endDT) Then
         AtHistoryTable = "Start/End must be DateTime"
         Exit Function
@@ -216,6 +313,7 @@ Public Function AtHistoryTable(ByVal tagHeaderRange As Range, ByVal startDT As V
     Dim s As Date, e As Date
     s = CDate(startDT)
     e = CDate(endDT)
+
     If e <= s Then
         AtHistoryTable = "End must be after Start"
         Exit Function
@@ -226,7 +324,6 @@ Public Function AtHistoryTable(ByVal tagHeaderRange As Range, ByVal startDT As V
         Exit Function
     End If
 
-    ' cache key
     Dim key As String
     key = MakeCacheKey(tagHeaderRange, s, e, period, pu)
 
@@ -235,80 +332,83 @@ Public Function AtHistoryTable(ByVal tagHeaderRange As Range, ByVal startDT As V
         Exit Function
     End If
 
-    ' pull data
     Dim startMs As Double, endMs As Double
     startMs = ExcelLocalDateToUnixMs(s)
     endMs = ExcelLocalDateToUnixMs(e)
 
-    Dim tagCount As Long: tagCount = tagHeaderRange.Columns.Count
+    Dim tagCount As Long
+    tagCount = tagHeaderRange.Columns.Count
 
-    ' per-tag dictionary: timestampKey -> value
     Dim perTag() As Object
     ReDim perTag(1 To tagCount)
 
-    Dim errors() As Boolean
-    ReDim errors(1 To tagCount)
+    Dim allTimes As Object
+    Set allTimes = CreateObject("Scripting.Dictionary")
 
-    Dim allTimes As Object: Set allTimes = CreateObject("Scripting.Dictionary")
+    Dim st As Long, stText As String, respText As String
+    Dim batchPayload As String, batchResp As String
+    Dim parsed As Variant
+    Dim i As Long, k As Variant
 
-    Dim i As Long
+    batchPayload = BuildBatchPayload(tagHeaderRange, startMs, endMs, period, pu)
+
+    dbgTag = "[BATCH]"
+    dbgPayload = batchPayload
+    dbgResp = ""
+    dbgStatus = 0
+    dbgStatusText = ""
+    dbgErr = ""
+
+    batchResp = PostHistory(batchPayload, st, stText, respText)
+
+    dbgStatus = st
+    dbgStatusText = stText
+    dbgResp = respText
+
+    parsed = ParseBatchResponseToPerTag(batchResp, tagCount)
+
     For i = 1 To tagCount
-        Dim tagName As String
-        tagName = Trim$(CStr(tagHeaderRange.Cells(1, i).Value))
-
-        If Len(tagName) = 0 Then
-            Set perTag(i) = CreateObject("Scripting.Dictionary")
-        Else
-            On Error GoTo TagFail
-
-            Dim st As Long, stText As String, respText As String
-            Dim payload As String, resp As String
-
-            payload = BuildPayload(tagName, startMs, endMs, period, pu)
-
-            ' ---- store dbg info BEFORE call (so you still see it if PostHistory errors) ----
-            dbgTag = tagName
-            dbgPayload = payload
-            dbgResp = ""
-            dbgStatus = 0
-            dbgStatusText = ""
-            dbgErr = ""
-
-            resp = PostHistory(payload, st, stText, respText)
-
-            ' ---- store dbg info AFTER call ----
-            dbgStatus = st
-            dbgStatusText = stText
-            dbgResp = respText   ' raw response text
-
-            Set perTag(i) = ParseSamplesToDict(resp)
-
-            Dim k As Variant
-            For Each k In perTag(i).Keys
+    Set perTag(i) = parsed(i)
+        If Not perTag(i)("HasError") Then
+            Dim valDict As Object
+            Set valDict = perTag(i)("Values")
+            
+            For Each k In valDict.Keys
                 If Not allTimes.Exists(CStr(k)) Then allTimes.Add CStr(k), True
             Next k
-
-            On Error GoTo Fail
         End If
-
-ContinueTag:
     Next i
 
     If allTimes.Count = 0 Then
-        AtHistoryTable = "No data" & _
-                         " | LastTag=" & dbgTag & _
-                         " | HTTP=" & CStr(dbgStatus) & " " & dbgStatusText & _
-                         " | Payload=" & Left$(dbgPayload, 400) & _
-                         " | Resp=" & Left$(dbgResp, 400) & _
-                         IIf(Len(dbgErr) > 0, " | " & dbgErr, "")
+        Dim onlyErrArr() As Variant
+        ReDim onlyErrArr(1 To 2, 1 To tagCount + 1)
+        
+        onlyErrArr(1, 1) = "Time"
+        
+        For i = 1 To tagCount
+            onlyErrArr(1, i + 1) = CStr(tagHeaderRange.Cells(1, i).Value)
+        Next i
+        
+        onlyErrArr(2, 1) = ""
+        
+        For i = 1 To tagCount
+            If perTag(i)("HasError") Then
+                onlyErrArr(2, i + 1) = "Invalid Tag"
+            Else
+                onlyErrArr(2, i + 1) = ""
+            End If
+        Next i
+        
+        Cache().Add key, onlyErrArr
+        AtHistoryTable = onlyErrArr
         Exit Function
     End If
 
-    ' build sorted time list
     Dim times() As Double
     ReDim times(1 To allTimes.Count)
 
-    Dim idx As Long: idx = 1
+    Dim idx As Long
+    idx = 1
     Dim tk As Variant
     For Each tk In allTimes.Keys
         times(idx) = CDbl(tk)
@@ -317,31 +417,36 @@ ContinueTag:
 
     QuickSortDoubles times, LBound(times), UBound(times)
 
-    ' output array: rows = 1 header + N data, cols = 1 time + tagCount
-    Dim n As Long: n = UBound(times)
+    Dim n As Long
+    n = UBound(times)
+
     Dim outArr() As Variant
     ReDim outArr(1 To n + 1, 1 To tagCount + 1)
 
-    ' headers
     outArr(1, 1) = "Time"
     For i = 1 To tagCount
         outArr(1, i + 1) = CStr(tagHeaderRange.Cells(1, i).Value)
     Next i
 
-    ' map time key -> row index in output
-    Dim rowByTime As Object: Set rowByTime = CreateObject("Scripting.Dictionary")
+    Dim rowByTime As Object
+    Set rowByTime = CreateObject("Scripting.Dictionary")
+
     Dim r As Long
     For r = 1 To n
-        rowByTime(MsKey(times(r))) = r + 1 ' +1 for header row
-        outArr(r + 1, 1) = UnixMsToExcelLocalDate(times(r)) ' datetime
+        rowByTime(MsKey(times(r))) = r + 1
+        outArr(r + 1, 1) = UnixMsToExcelLocalDate(times(r))
     Next r
 
-    ' fill tag columns aligned
     For i = 1 To tagCount
-        If errors(i) Then
-            outArr(2, i + 1) = "Error"
+        If perTag(i)("HasError") Then
+            ' First data row for this tag gets the marker
+            If UBound(outArr, 1) >= 2 Then
+                outArr(2, i + 1) = "Invalid Tag"
+            End If
         Else
-            Dim d As Object: Set d = perTag(i)
+            Dim d As Object
+            Set d = perTag(i)("Values")
+    
             Dim kk As Variant
             For Each kk In d.Keys
                 If rowByTime.Exists(CStr(kk)) Then
@@ -351,19 +456,51 @@ ContinueTag:
         End If
     Next i
 
-    ' store cache and return
     Cache().Add key, outArr
     AtHistoryTable = outArr
     Exit Function
 
-TagFail:
-    ' Capture VBA error info for debugging
-    dbgErr = "Err " & CStr(Err.Number) & ": " & Err.Description
-    errors(i) = True
-    Set perTag(i) = CreateObject("Scripting.Dictionary")
-    Resume ContinueTag
-
 Fail:
     AtHistoryTable = "Error: " & Err.Description
+End Function
+
+Private Function ParseOneTagBlock(ByVal blockText As String) As Object
+    Dim result As Object
+    Set result = CreateObject("Scripting.Dictionary")
+    
+    result("HasError") = False
+    result("ErrorMessage") = ""
+    Set result("Values") = CreateObject("Scripting.Dictionary")
+    
+    Dim reErr As Object, matches As Object
+    Set reErr = CreateObject("VBScript.RegExp")
+    
+    ' Handles:
+    ' {"er":5,"ec":-2147024809,"es":"Tag Name Error Tag Test is invalid"}
+    ' {er:5,ec:-2147024809,es:"Tag Name Error ..."}
+    reErr.Pattern = """" & "?er" & """" & "?\s*:\s*-?\d+.*?" & _
+                    """" & "?ec" & """" & "?\s*:\s*-?\d+.*?" & _
+                    """" & "?es" & """" & "?\s*:\s*("".*?""|'.*?')"
+    reErr.Global = False
+    reErr.IgnoreCase = True
+    reErr.Multiline = True
+    
+    If reErr.Test(blockText) Then
+        Set matches = reErr.Execute(blockText)
+        result("HasError") = True
+        
+        Dim msg As String
+        msg = matches(0).SubMatches(0)
+        If Left$(msg, 1) = """" Or Left$(msg, 1) = "'" Then
+            msg = Mid$(msg, 2, Len(msg) - 2)
+        End If
+        result("ErrorMessage") = msg
+        
+        Set ParseOneTagBlock = result
+        Exit Function
+    End If
+    
+    Set result("Values") = ParseSamplesToDict(blockText)
+    Set ParseOneTagBlock = result
 End Function
 
