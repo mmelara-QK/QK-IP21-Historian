@@ -1,0 +1,27 @@
+import { queryHistorian, dropHeader, getLastDebugMessage } from "../shared/api.js";
+
+/**
+ * @customfunction
+ */
+export async function QKHISTORY(tags, start, end, period, pu, configJson) {
+  return queryHistorian(tags, start, end, period, pu, configJson);
+}
+
+/**
+ * @customfunction
+ */
+export async function QKHISTORYDATA(tags, start, end, period, pu, configJson) {
+  const table = await queryHistorian(tags, start, end, period, pu, configJson);
+  return dropHeader(table);
+}
+
+/**
+ * @customfunction
+ */
+export function QKHISTORYLASTDEBUG() {
+  return getLastDebugMessage();
+}
+
+CustomFunctions.associate("QKHISTORY", QKHISTORY);
+CustomFunctions.associate("QKHISTORYDATA", QKHISTORYDATA);
+CustomFunctions.associate("QKHISTORYLASTDEBUG", QKHISTORYLASTDEBUG);

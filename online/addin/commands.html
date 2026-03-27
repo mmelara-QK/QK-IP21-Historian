@@ -1,0 +1,265 @@
+export const DEFAULT_CONFIG = {
+  baseUrl: "http://phyvqktwatipa03/Web21/ProcessData/AtProcessDataREST.dll",
+  historyEndpoint: "/History",
+  dataSource: "localhost",
+  field: "VAL",
+  hf: 0,
+  rt: 1,
+  stepped: 0,
+  requestMode: "D",
+  useCredentials: true,
+  useProxy: false,
+  proxyUrl: "",
+  timeoutMs: 30000,
+  debugEnabled: true
+};
+
+const CACHE = new Map();
+let lastDebugMessage = "";
+
+function setLastDebugMessage(message) {
+  lastDebugMessage = message || "";
+  console.log("[QK-IP21]", lastDebugMessage);
+}
+
+export function getLastDebugMessage() {
+  return lastDebugMessage;
+}
+
+export function clearHistorianCache() {
+  CACHE.clear();
+  setLastDebugMessage("Historian cache cleared.");
+}
+
+export function getSavedConfig() {
+  try {
+    const raw = localStorage.getItem("qk-ip21-config");
+    if (!raw) return { ...DEFAULT_CONFIG };
+    return { ...DEFAULT_CONFIG, ...JSON.parse(raw) };
+  } catch (error) {
+    setLastDebugMessage(`Could not read saved config: ${error?.message || error}`);
+    return { ...DEFAULT_CONFIG };
+  }
+}
+
+export function saveConfig(config) {
+  const merged = { ...DEFAULT_CONFIG, ...config };
+  localStorage.setItem("qk-ip21-config", JSON.stringify(merged));
+  setLastDebugMessage(`Saved config for ${merged.baseUrl}${merged.historyEndpoint}`);
+  return merged;
+}
+
+function normalizeConfig(configJson) {
+  const saved = getSavedConfig();
+  if (!configJson) return saved;
+  if (typeof configJson === "string" && configJson.trim().length > 0) {
+    try {
+      return { ...saved, ...JSON.parse(configJson) };
+    } catch (error) {
+      throw new Error(`configJson is not valid JSON: ${error.message}`);
+    }
+  }
+  return saved;
+}
+
+function flattenTags(tagMatrix) {
+  if (!Array.isArray(tagMatrix) || tagMatrix.length === 0) {
+    return [];
+  }
+  const firstRow = Array.isArray(tagMatrix[0]) ? tagMatrix[0] : tagMatrix;
+  return firstRow.map((v) => `${v ?? ""}`.trim()).filter((v) => v.length > 0);
+}
+
+function excelSerialToDate(value) {
+  if (value instanceof Date) return value;
+  if (typeof value === "number") {
+    const utcDays = value - 25569;
+    const utcMillis = utcDays * 86400 * 1000;
+    return new Date(utcMillis);
+  }
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) {
+    throw new Error(`Invalid date/time value: ${value}`);
+  }
+  return d;
+}
+
+function toUnixMs(value) {
+  return excelSerialToDate(value).getTime();
+}
+
+function msKey(ms) {
+  return `${Math.trunc(ms)}`;
+}
+
+function makeCacheKey(tags, start, end, period, pu, config) {
+  return JSON.stringify({ tags, start: msKey(start), end: msKey(end), period, pu, baseUrl: config.baseUrl, endpoint: config.historyEndpoint, requestMode: config.requestMode, proxyUrl: config.proxyUrl || "" });
+}
+
+function xmlEscapeCDataSafe(text) {
+  return String(text).replaceAll("]]>", "]]]]><![CDATA[>");
+}
+
+function buildBatchPayload(tags, startMs, endMs, period, pu, config) {
+  const tagXml = tags.map((tagName) => (
+    `<Tag>` +
+      `<N><![CDATA[${xmlEscapeCDataSafe(tagName)}]]></N>` +
+      `<D><![CDATA[${xmlEscapeCDataSafe(config.dataSource)}]]></D>` +
+      `<F><![CDATA[${xmlEscapeCDataSafe(config.field)}]]></F>` +
+      `<HF>${config.hf}</HF>` +
+      `<St>${msKey(startMs)}</St>` +
+      `<Et>${msKey(endMs)}</Et>` +
+      `<RT>${config.rt}</RT>` +
+      `<S>${config.stepped}</S>` +
+      `<P>${period}</P>` +
+      `<PU>${pu}</PU>` +
+    `</Tag>`
+  )).join("");
+  return `<Q f="${config.requestMode}">${tagXml}</Q>`;
+}
+
+function escapeJsonString(value) {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\r/g, "\\r").replace(/\n/g, "\\n").replace(/\t/g, "\\t");
+}
+
+function normalizePseudoJson(text) {
+  let s = `${text ?? ""}`.trim();
+  s = s.replace(/([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:/g, '$1"$2":');
+  s = s.replace(/:\s*'([^'\\]*(?:\\.[^'\\]*)*)'/g, (_, inner) => `:"${escapeJsonString(inner)}"`);
+  return s;
+}
+
+function parseHistorianResponse(responseText) {
+  const normalized = normalizePseudoJson(responseText);
+  const parsed = JSON.parse(normalized);
+  if (!parsed || !Array.isArray(parsed.data)) {
+    throw new Error("Historian response did not contain a data array.");
+  }
+  return parsed.data.map((block) => {
+    const result = { hasError: false, errorMessage: "", values: new Map() };
+    const samples = Array.isArray(block?.samples) ? block.samples : [];
+    if (samples.length > 0 && samples[0] && (samples[0].es || samples[0].er !== undefined)) {
+      result.hasError = true;
+      result.errorMessage = samples[0].es || "Invalid Tag";
+      return result;
+    }
+    for (const sample of samples) {
+      if (sample?.t === undefined) continue;
+      const key = msKey(sample.t);
+      if (sample.v === null || sample.v === undefined) {
+        result.values.set(key, "");
+      } else {
+        result.values.set(key, sample.v);
+      }
+    }
+    return result;
+  });
+}
+
+async function fetchWithTimeout(resource, options, timeoutMs) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(resource, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(id);
+  }
+}
+
+async function postHistory(payloadXml, config) {
+  const url = config.useProxy && config.proxyUrl ? config.proxyUrl : `${config.baseUrl}${config.historyEndpoint}`;
+  setLastDebugMessage(`POST ${url}\nPayload: ${payloadXml.slice(0, 1200)}`);
+  let response;
+  if (config.useProxy && config.proxyUrl) {
+    response = await fetchWithTimeout(config.proxyUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "application/json" },
+      credentials: config.useCredentials ? "include" : "same-origin",
+      body: JSON.stringify({
+        url: `${config.baseUrl}${config.historyEndpoint}`,
+        payloadXml,
+        headers: { "Content-Type": "text/xml; charset=utf-8", "Accept": "application/json" }
+      })
+    }, config.timeoutMs);
+  } else {
+    response = await fetchWithTimeout(url, {
+      method: "POST",
+      headers: { "Content-Type": "text/xml; charset=utf-8", "Accept": "application/json" },
+      credentials: config.useCredentials ? "include" : "same-origin",
+      body: payloadXml
+    }, config.timeoutMs);
+  }
+  const text = await response.text();
+  setLastDebugMessage(`HTTP ${response.status} ${response.statusText}\nResponse: ${text.slice(0, 1200)}`);
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status} ${response.statusText}: ${text.slice(0, 400)}`);
+  }
+  return text;
+}
+
+export async function queryHistorian(tagMatrix, start, end, period, pu, configJson) {
+  const config = normalizeConfig(configJson);
+  const tags = flattenTags(tagMatrix);
+  if (tags.length === 0) throw new Error("Tag range must contain at least one nonblank tag.");
+  const startMs = toUnixMs(start);
+  const endMs = toUnixMs(end);
+  if (!(endMs > startMs)) throw new Error("End must be after Start.");
+  const cacheKey = makeCacheKey(tags, startMs, endMs, period, pu, config);
+  if (CACHE.has(cacheKey)) {
+    setLastDebugMessage(`CACHE HIT ${cacheKey}`);
+    return CACHE.get(cacheKey);
+  }
+  const payload = buildBatchPayload(tags, startMs, endMs, period, pu, config);
+  const responseText = await postHistory(payload, config);
+  const parsedBlocks = parseHistorianResponse(responseText);
+  const allTimes = new Set();
+  for (const block of parsedBlocks) {
+    if (!block.hasError) for (const key of block.values.keys()) allTimes.add(key);
+  }
+  const times = [...allTimes].map((t) => Number(t)).sort((a, b) => a - b);
+  const out = [];
+  out.push(["Time", ...tags]);
+  if (times.length === 0) {
+    const row = [""];
+    for (let i = 0; i < tags.length; i += 1) row.push(parsedBlocks[i]?.hasError ? "Invalid Tag" : "");
+    out.push(row);
+    CACHE.set(cacheKey, out);
+    return out;
+  }
+  const rowByTime = new Map();
+  for (const t of times) {
+    const row = [new Date(t)];
+    for (let i = 0; i < tags.length; i += 1) row.push("");
+    rowByTime.set(msKey(t), out.length);
+    out.push(row);
+  }
+  for (let i = 0; i < tags.length; i += 1) {
+    const block = parsedBlocks[i] || { hasError: true, values: new Map() };
+    if (block.hasError) {
+      if (out.length >= 2) out[1][i + 1] = "Invalid Tag";
+      continue;
+    }
+    for (const [timeKey, value] of block.values.entries()) {
+      const rowIndex = rowByTime.get(timeKey);
+      if (rowIndex !== undefined) out[rowIndex][i + 1] = value ?? "";
+    }
+  }
+  CACHE.set(cacheKey, out);
+  return out;
+}
+
+export function dropHeader(table) {
+  if (!Array.isArray(table) || table.length <= 1) return "";
+  return table.slice(1);
+}
+
+export async function testConnection(configJson) {
+  const config = normalizeConfig(configJson);
+  const payload = `<Q f="${config.requestMode}"><Tag><N><![CDATA[TEST]]></N><D><![CDATA[${config.dataSource}]]></D><F><![CDATA[${config.field}]]></F><HF>${config.hf}</HF><St>0</St><Et>1</Et><RT>${config.rt}</RT><S>${config.stepped}</S><P>1</P><PU>2</PU></Tag></Q>`;
+  try {
+    await postHistory(payload, config);
+    return "Connected";
+  } catch (error) {
+    return `Connection failed: ${error.message}`;
+  }
+}

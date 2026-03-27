@@ -1,0 +1,103 @@
+{
+  "allowCustomDataForDataTypeAny": true,
+  "functions": [
+    {
+      "id": "QKHISTORY",
+      "name": "QKHISTORY",
+      "description": "Returns a timestamp-aligned historian table including the header row.",
+      "helpUrl": "https://github.com/mmelara-QK/QK-IP21-Historian",
+      "result": {
+        "type": "matrix",
+        "dimensionality": "2d"
+      },
+      "parameters": [
+        {
+          "name": "tags",
+          "description": "A 1-row range of tag headers.",
+          "type": "matrix",
+          "dimensionality": "2d"
+        },
+        {
+          "name": "start",
+          "description": "Start date/time cell or value.",
+          "type": "any"
+        },
+        {
+          "name": "end",
+          "description": "End date/time cell or value.",
+          "type": "any"
+        },
+        {
+          "name": "period",
+          "description": "Sampling period.",
+          "type": "number"
+        },
+        {
+          "name": "pu",
+          "description": "Period units: 0=Day, 1=Hour, 2=Minute, 3=Second.",
+          "type": "number"
+        },
+        {
+          "name": "configJson",
+          "description": "Optional JSON string with endpoint overrides.",
+          "type": "string",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "id": "QKHISTORYDATA",
+      "name": "QKHISTORYDATA",
+      "description": "Returns historian data rows only, without the header row.",
+      "helpUrl": "https://github.com/mmelara-QK/QK-IP21-Historian",
+      "result": {
+        "type": "matrix",
+        "dimensionality": "2d"
+      },
+      "parameters": [
+        {
+          "name": "tags",
+          "description": "A 1-row range of tag headers.",
+          "type": "matrix",
+          "dimensionality": "2d"
+        },
+        {
+          "name": "start",
+          "description": "Start date/time cell or value.",
+          "type": "any"
+        },
+        {
+          "name": "end",
+          "description": "End date/time cell or value.",
+          "type": "any"
+        },
+        {
+          "name": "period",
+          "description": "Sampling period.",
+          "type": "number"
+        },
+        {
+          "name": "pu",
+          "description": "Period units: 0=Day, 1=Hour, 2=Minute, 3=Second.",
+          "type": "number"
+        },
+        {
+          "name": "configJson",
+          "description": "Optional JSON string with endpoint overrides.",
+          "type": "string",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "id": "QKHISTORYLASTDEBUG",
+      "name": "QKHISTORYLASTDEBUG",
+      "description": "Returns the last debug message captured by the add-in.",
+      "helpUrl": "https://github.com/mmelara-QK/QK-IP21-Historian",
+      "result": {
+        "type": "string"
+      },
+      "parameters": []
+    }
+  ]
+}

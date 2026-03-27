@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>QK Historian</title>
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <script type="module" src="./taskpane.js"></script>
+  <link rel="stylesheet" href="./taskpane.css" />
+</head>
+<body>
+  <main class="wrap">
+    <h1>QK IP21 Historian</h1>
+    <p class="note">Direct browser calls only work when the browser can reach the IP21 endpoint and the server allows CORS and credentials. Otherwise use an internal HTTPS proxy.</p>
+    <section class="card">
+      <h2>Connection</h2>
+      <label>Base URL <input id="baseUrl" /></label>
+      <label>History endpoint <input id="historyEndpoint" /></label>
+      <label>Proxy URL (optional) <input id="proxyUrl" placeholder="https://internal-proxy.example.com/ip21/history" /></label>
+      <label>Request mode
+        <select id="requestMode"><option value="D">D</option><option value="d">d</option></select>
+      </label>
+      <label>Data source <input id="dataSource" /></label>
+      <div class="grid">
+        <label>Field <input id="field" /></label>
+        <label>HF <input id="hf" type="number" /></label>
+        <label>RT <input id="rt" type="number" /></label>
+        <label>Stepped <input id="stepped" type="number" /></label>
+      </div>
+      <label><input type="checkbox" id="useCredentials" /> Send browser credentials</label>
+      <div class="row">
+        <button id="saveConfig">Save config</button>
+        <button id="testConnection">Test connection</button>
+        <button id="clearCache">Clear cache</button>
+      </div>
+      <pre id="connectionStatus"></pre>
+    </section>
+    <section class="card">
+      <h2>Insert formula</h2>
+      <label>Tag range address <input id="tagsAddress" placeholder="Sheet1!A1:C1" /></label>
+      <label>Start cell address <input id="startAddress" placeholder="Sheet1!A2" /></label>
+      <label>End cell address <input id="endAddress" placeholder="Sheet1!B2" /></label>
+      <label>Output cell address <input id="outputAddress" placeholder="Sheet1!D2" /></label>
+      <div class="grid">
+        <label>Period <input id="period" type="number" value="1" /></label>
+        <label>PU
+          <select id="pu"><option value="0">0 = Day</option><option value="1">1 = Hour</option><option value="2" selected>2 = Minute</option><option value="3">3 = Second</option></select>
+        </label>
+      </div>
+      <div class="row">
+        <button data-pick="tagsAddress">Use selection for tags</button>
+        <button data-pick="startAddress">Use selection for start</button>
+        <button data-pick="endAddress">Use selection for end</button>
+        <button data-pick="outputAddress">Use selection for output</button>
+      </div>
+      <div class="row">
+        <button id="insertHistoryData">Insert QKHISTORYDATA</button>
+        <button id="insertHistory">Insert QKHISTORY</button>
+      </div>
+    </section>
+    <section class="card">
+      <h2>Debug</h2>
+      <button id="refreshDebug">Refresh last debug</button>
+      <pre id="debugText"></pre>
+    </section>
+    <section class="card">
+      <h2>Functions</h2>
+      <code>=QKHISTORY(tags,start,end,period,pu,[configJson])</code><br/>
+      <code>=QKHISTORYDATA(tags,start,end,period,pu,[configJson])</code><br/>
+      <code>=QKHISTORYLASTDEBUG()</code>
+    </section>
+  </main>
+</body>
+</html>
